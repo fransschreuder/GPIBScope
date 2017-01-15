@@ -1,4 +1,4 @@
-///include "hp54111d.h"
+#include "hp54111d.h"
 
 HP54111d::HP54111d(QObject *parent) :
     QObject(parent)
@@ -27,342 +27,376 @@ HP54111d::~HP54111d()
 
 void HP54111d::dataRead(QByteArray data)
 {
-    qDebug()<<"HP54111d received: " << data;
-    /**
-      "STOPPED"
-    if ( (i == 42) or (i ==0 ) ):
-        return 1
-    else:
-        return -1
+    bool success;
+    QString dataS(unfinishedData+data);
+    qDebug()<<"HP54111d received: " << dataS;
+    unfinishedData = "";
+    DataType type = expectedData.back();
+    expectedData.pop_back();
+    int i;
+    QStringList sl;
+    switch(type)
+    {
+        case STOPPED:
+            i=dataS.toLong();
+            if ( (i == 42) || (i ==0 ) )
+                emit stopped(true);
+            else
+                emit stopped(false);
+            break;
+        case STATUS:
+            qDebug()<<"Status: "<<data;
+            emit status(dataS);
+            break;
+        case ID:
+            emit id(dataS);
+        case PREAMBLE:
+            sl=dataS.split(',');
+            qDebug()<<"Preamle: "<<sl;
 
-      "STATUS"
-      "ID"
-        */
+            if(sl.size()<11)
+            {
+                qDebug()<<"Preamble does not have enough points";
+                unfinishedData = dataS;
+                break;
+            }
+            POINTS = sl[3].toLong();
+            XINC   = sl[5].toDouble();
+            XORG   = sl[6].toDouble();
+            XREF   = sl[7].toDouble();
+            YINC   = sl[8].toDouble();
+            Y1ORG  = sl[9].toDouble();
+            Y2ORG  = Y1ORG;
+            YREF   = sl[10].toDouble();
+            break;
+        case CH1SENS:
+            Y1DIV=dataS.toDouble();
+            gpib->write("CH 2 SENS?\n");
+            expectedData.push_back(CH1SENS);
+            break;
+        case CH2SENS:
+            Y1DIV=dataS.toDouble();
+            gpib->write("TIM SENS?\n");
+            expectedData.push_back(TIMESENS);
+            break;
+        case TIMESENS:
+            XDIV = dataS.toDouble();
+            emit preamble(POINTS,XINC,XORG,XREF,YINC,Y1ORG,Y2ORG);
+            break;
+
+        case DATA:
+            qDebug()<<"DATA:" << dataS;
+            /**
+             * TODO: Interprete dataS like python code below:
+             * GPIB.readbyte(4)
+            ///print "///2A + len (2bytes)"
+            YP=GPIB.readbyte(len)   ///data
+            data= zeros (len, Float)
+            y1div=float(GetSensitivity('1'))
+            y2div=float(GetSensitivity('2'))
+            yref=float(YREF)
+            yinc=float(YINC)
+            yorg=float(GetYorg(str))
+            if (str=='1'):
+               for XP in range (0,len,1):
+                   data[XP]= ( (ord(YP[XP]) - yref)*yinc + yorg )
+            else:
+               for XP in range (0,len,1):
+                   data[XP]= ( (ord(YP[XP]) - yref)*yinc + yorg ) * y1div/ y2div
+            return data
+            */
+            emit dataPoints();
+            break;
+        case ACQPOINTS:
+            acqPoints = dataS.toDouble(&success);
+            if(!success)qDebug()<<"No acquisition made!\nFirst Acquire Data";
+            break;
+        case ACQRES:
+            acqRes = dataS.toDouble(&success);
+            if(!success)qDebug()<<"No acquisition made!\nFirst Acquire Data";
+            break;
+        default:
+            qDebug()<<type<<" not implemented, invalid return value from scope";
+            break;
+    }
 }
 
 
 
 /// system command
 /// *****************
-    void HP54111d::Reset(void)  /// preset s to its void HP54111d::ault settings
+void HP54111d::Reset(void)  /// preset s to its void HP54111d::ault settings
+{
+    gpib->write("RESET\n");
+}
+
+void HP54111d::Stop(void) /// stops acquire
+{
+    gpib->write("KEY 42\n");
+}
+
+void HP54111d::Run(void) /// runs acquire
+{
+    gpib->write("RUN\n");
+}
+
+void HP54111d::SetLocal(void) /// sets instrument in local mode
+{
+    gpib->write("LOCAL\n");
+}
+
+void HP54111d::Autoscale(void)
+{
+    gpib->write("AUTOSCALE\n");
+}
+
+bool HP54111d::View(int str)  /// 1 to 4
+{
+
+    if ((str>0) && (str<5))
     {
-        gpib->write("RESET\n");
+       QString msg = QString("VIEW CH %1\n").arg(str);
+       gpib->write(msg.toUtf8());
+       //st=GPIB.read()
+       expectedData.push_back(STATUS);
+       return true;
     }
+    else
+       return false;
+}
 
-    void HP54111d::Stop(void) /// stops acquire
-    {
-        gpib->write("KEY 42\n");
-    }
+void HP54111d::GetStatus(void)
+{
 
-    void HP54111d::Run(void) /// runs acquire
-    {
-        gpib->write("RUN\n");
-    }
+    gpib->write("STA?\n");
+    expectedData.push_back(STATUS);
+}
 
-    void HP54111d::SetLocal(void) /// sets instrument in local mode
-    {
-        gpib->write("LOCAL\n");
-    }
+void HP54111d::IsStopped(void)
+{
+    gpib->write("KEY?\n");
 
-    void HP54111d::Autoscale(void)
-    {
-        gpib->write("AUTOSCALE\n");
-    }
+    expectedData.push_back(STOPPED);
+}
 
-    bool HP54111d::View(int str)  /// 1 to 4
-    {
+void HP54111d::GetID(void)
+{
+    gpib->write("ID?\n");
+    expectedData.push_back(ID);
+    //st=GPIB.read()
 
-        if ((str>0) && (str<5))
-        {
-           QString msg = QString("VIEW CH %1\n").arg(str);
-           gpib->write(msg);
-           //st=self.GPIB.read()
-           dataExpected.push_back("STATUS");
-           return true;
-        }
-        else
-           return false;
-    }
-
-    void HP54111d::GetStatus(void)
-    {
-
-        gpib->write("STA?\n");
-        dataExpected.push_back("STATUS");
-    }
-
-    void HP54111d::IsStopped(void)
-    {
-        gpib->write("KEY?\n");
-
-        dataExpected.push_back("STOPPED");
-    }
-
-    void HP54111d::GetID(void)
-    {
-        gpib->write("ID?\n");
-        dataExpected.push_back("ID");
-        //st=self.GPIB.read()
-
-    }
+}
 
 
 ///channel subsystem
 ///*****************
-    double HP54111d::GetSensitivity(int channel)  /// '1' to '4'
-    {
-        if (channel==1)
-           return Y1DIV;
-        else
-           return Y2DIV;
-    }
+double HP54111d::GetSensitivity(int channel)  /// '1' to '4'
+{
+    if (channel==1)
+       return Y1DIV;
+    else
+       return Y2DIV;
+}
 
-    bool HP54111d::SetSensitivity(int ch, double sensitivity)  ///  '1' "0.01"
+bool HP54111d::SetSensitivity(int ch, double sensitivity)  ///  '1' "0.01"
+{
+    if ((ch>'0') &&(ch<'5'))
     {
-        if ((ch>'0') &&(ch<'5'))
-        {
-           QString msg = QString("CH %1 SENS %2\n").arg(ch).arg(sensitivity);
-           gpib->write(msg);
-           expectedData.push_back("STATUS");
-           //st=self.GPIB.read()
-           return true;
-        }
-        else
-           return false;
+       QString msg = QString("CH %1 SENS %2\n").arg(ch).arg(sensitivity);
+       gpib->write(msg.toUtf8());
+       expectedData.push_back(STATUS);
+       //st=GPIB.read()
+       return true;
     }
+    else
+       return false;
+}
 
-    bool HP54111d::GetOffset(int ch)
+bool HP54111d::GetOffset(int ch)
+{
+    if (ch>0&&ch<5)
     {
-        if (ch>0&&ch<5)
-        {
-           QString msg = QString("CH %1 OFFS?\n").arg(ch);
-           gpib->write(msg);
-           expectedData.push_back("STATUS");
-           return true;
-        }
-        else
-           return false;
+       QString msg = QString("CH %1 OFFS?\n").arg(ch);
+       gpib->write(msg.toUtf8());
+       expectedData.push_back(OFFSET);
+       return true;
     }
+    else
+       return false;
+}
 
-    bool HP54111d::SetOffset(int ch, double str)
-    {
-       if (ch>0&&ch<5)
-       {
-           QString msg = QString("CH %1 OFFS %2\n").arg(ch).arg(str);
-           gpib->write(msg);
-           expectedData.push_back("STATUS");
-           return true;
-       }
-       else
-           return false;
-    }
+bool HP54111d::SetOffset(int ch, double str)
+{
+   if (ch>0&&ch<5)
+   {
+       QString msg = QString("CH %1 OFFS %2\n").arg(ch).arg(str);
+       gpib->write(msg.toUtf8());
+       expectedData.push_back(STATUS);
+       return true;
+   }
+   else
+       return false;
+}
 
 /// Timebase subsystem
 ///*****************
-    double HP54111d::GetTimebase(void)
-    {
-        return XDIV;
-    }
+double HP54111d::GetTimebase(void)
+{
+    return XDIV;
+}
 
-    void HP54111d::SetTimebase(self,str):
-        msg = "TIM SENS %s\n" %(str)
-        gpib->write(msg)
-        st=self.GPIB.read()
-        return st
+void HP54111d::SetTimebase(double timebase)
+{
+    QString msg = QString("TIM SENS %1\n").arg(timebase);
+    gpib->write(msg.toUtf8());
+    expectedData.push_back(STATUS);
+}
 
-    void HP54111d::GetDelay(void):
-        gpib->write("TIM DEL?\n")
-        st=self.GPIB.read()
-        return st
+void HP54111d::GetDelay(void)
+{
+    gpib->write("TIM DEL?\n");
+    expectedData.push_back(DELAY);
+}
 
-    void HP54111d::SetDelay(self, str):
-        msg = "TIM DEL %s\n" %(str)
-        gpib->write(msg)
-        st=self.GPIB.read()
-        return st
+void HP54111d::SetDelay(double  delay)
+{
+    QString msg = QString("TIM DEL %1\n").arg(delay);
+    gpib->write(msg.toUtf8());
+    expectedData.push_back(STATUS);
+}
 
-    void HP54111d::GetReference(void):
-        gpib->write("TIM REF?\n")
-        st=self.GPIB.read()
-        return st
+void HP54111d::GetReference(void)
+{
+    gpib->write("TIM REF?\n");
+    expectedData.push_back(REFERENCE);
+}
 
-    void HP54111d::SetReference(self, str):  /// 'LEFT' 'CENTER' 'RIGHT'
-        msg = "TIM REF %s\n" %(str)
-        gpib->write(msg)
-        st=self.GPIB.read()
-        return st
+void HP54111d::SetReference(QString ref)  /// 'LEFT' 'CENTER' 'RIGHT'
+{
+    QString msg = QString("TIM REF %1\n").arg(ref);
+    gpib->write(msg.toUtf8());
+    expectedData.push_back(STATUS);
+}
 
 ///  Waveform subsystem
 ///*****************
-    void HP54111d::GetXref(void):  ///0
-        ///gpib->write("WAV XREFERENCE?\n")
-        ///st=self.GPIB.read()
-        return self.XREF
+double HP54111d::GetXref(void)  ///0
+{
+    ///gpib->write("WAV XREFERENCE?\n")
+    ///st=GPIB.read()
+    return XREF;
+}
 
-    void HP54111d::GetYref(void):  ///128
-        ///gpib->write("WAV YREFERENCE?\n")
-        ///st=self.GPIB.read()
-        return self.YREF
+double HP54111d::GetYref(void)  ///128
+{
+    ///gpib->write("WAV YREFERENCE?\n")
+    ///st=GPIB.read()
+    return YREF;
+}
 
-    void HP54111d::GetXinc(void):  ///real 10ps to 20ms
-        ///gpib->write("XINCREMENT?\n")
-        ///st=self.GPIB.read()
-        ///bug oscilloscope !!!
-        if self.XINC=='  1.00000E-09':
-            ///print 'self.XINC=',self.XINC,' Oscillo error !!'
-            self.XINC=str(float(self.XDIV)/50.0)
-        ///print self.XINC
-        self.XINC=str(float(self.XDIV)/50.0)
-        return self.XINC
+double HP54111d::GetXinc(void)  ///real 10ps to 20ms
+{
+    ///gpib->write("XINCREMENT?\n")
+    ///st=GPIB.read()
+    XINC=XDIV/50.0;
+    return XINC;
+}
 
-    void HP54111d::GetYinc(void):  ///real
-        ///gpib->write("WAV YINCREMENT?\n")
-        ///st=self.GPIB.read()
-        return self.YINC
+double HP54111d::GetYinc(void)  ///real
+{
+    ///gpib->write("WAV YINCREMENT?\n")
+    ///st=GPIB.read()
+    return YINC;
+}
 
-    void HP54111d::GetYorg(self,str):  ///real
-        ///gpib->write("WAV YORIGIN?\n")
-        ///st=self.GPIB.read()
-        return self.YORG1
+double HP54111d::GetYorg(void)  ///real
+{
+    return Y1ORG;
+}
 
-    void HP54111d::GetXorg(void):  ///real
-        ///gpib->write("WAV XORIGIN?\n")
-        ///st=self.GPIB.read()
-        return self.XORG
+double HP54111d::GetXorg(void)  ///real
+{
+    ///gpib->write("WAV XORIGIN?\n")
+    ///st=GPIB.read()
+    return XORG;
+}
 
-    void HP54111d::WaveForm (void):
-        gpib->write("WAV?\n")
-        st=self.GPIB.read()
-        return st
+void HP54111d::WaveForm (void)
+{
+    gpib->write("WAV?\n");
+    expectedData.push_back(WAVE);
+}
 
-    void HP54111d::GetPreamble (void):
-        gpib->write("WAV SRC MEM1 PRE?\n")
-        st=self.GPIB.read()
-        pos=st.find(',')+1
-        st=st[pos:]
-        pos=st.find(',')+1
-        st=st[pos:]
+void HP54111d::GetPreamble (void)
+{
 
-        pos=st.find(',')
-        self.POINTS=st[:pos]
-        ///print self.POINTS
-        st=st[pos+1:]
+    gpib->write("WAV SRC MEM1 PRE?\n");
+    expectedData.push_back(PREAMBLE);
+}
 
-        ///print st
-        pos=st.find(',')+1
-        st=st[pos:]
+void HP54111d::GetCoupling(void)
+{
+    gpib->write("WAV COUPLING?\n");
+    expectedData.push_back(COUPLING);
+}
 
-        pos=st.find(',')
-        self.XINC=st[:pos]
-        ///print 'self.XINC=',self.XINC
+void HP54111d::SetCoupling(QString coupling)  /// 'DC' 'AC' 'GND'
+{
+    QString msg = QString("WAV COUPLING %1\n").arg(coupling);
+    gpib->write(msg.toUtf8());
+    expectedData.push_back(STATUS);
+}
 
-        st=st[pos+1:]
+void HP54111d::GetValid(void)  ///0
+{
+    gpib->write("WAV VALID?\n");
+    expectedData.push_back(WAVEVALID);
+}
 
-        pos=st.find(',')
-        self.XORG=st[:pos]
-        ///print 'self.XORG=',self.XORG
-        st=st[pos+1:]
-
-        pos=st.find(',')
-        self.XREF=st[:pos]
-        ///print 'self.XREF=',self.XREF
-        st=st[pos+1:]
-
-        pos=st.find(',')
-        self.YINC=st[:pos]
-        ///print 'self.YINC=',self.YINC
-        st=st[pos+1:]
-
-        pos=st.find(',')
-        self.YORG1=self.YORG2=st[:pos]
-        ///print 'self.YORG1=',self.YORG1
-        st=st[pos+1:]
-
-        pos=st.find(',')
-        self.YREF=st[:pos]
-        ///print 'self.YREF=',self.YREF
-        st=st[pos+1:]
-
-        gpib->write("CH 1 SENS?\n")
-        self.Y1DIV=self.GPIB.read()
-
-        gpib->write("CH 2 SENS?\n")
-        self.Y2DIV=self.GPIB.read()
-
-        gpib->write("TIM SENS?\n")
-        self.XDIV=self.GPIB.read()
-
-        return st
-
-    void HP54111d::GetCoupling(void):
-        gpib->write("WAV COUPLING?\n")
-        st=self.GPIB.read()
-        return st
-
-    void HP54111d::SetCoupling(void):  /// 'DC' 'AC' 'GND'
-        msg = "WAV COUPLING %s\n" %(str)
-        gpib->write(msg)
-        st=self.GPIB.read()
-        return st
-
-    void HP54111d::GetValid(void):  ///0
-        gpib->write("WAV VALID?\n")
-        st=self.GPIB.read()
-        return st
-
-    void HP54111d::GetData(self,str,len=8*Ko):
-        msg = "WAV SRC MEM%s FORMAT BYTE\n" %(str)
-        gpib->write(msg)
-        gpib->write("DATA?\n")
-        self.GPIB.readbyte(4)
-        ///print "///2A + len (2bytes)"
-        YP=self.GPIB.readbyte(len)   ///data
-        data= zeros (len, Float)
-        y1div=float(self.GetSensitivity('1'))
-        y2div=float(self.GetSensitivity('2'))
-        yref=float(self.YREF)
-        yinc=float(self.YINC)
-        yorg=float(self.GetYorg(str))
-        if (str=='1'):
-           for XP in range (0,len,1):
-               data[XP]= ( (ord(YP[XP]) - yref)*yinc + yorg )
-        else:
-           for XP in range (0,len,1):
-               data[XP]= ( (ord(YP[XP]) - yref)*yinc + yorg ) * y1div/ y2div
-        return data
-
-
+void HP54111d::GetData(int ch)
+{
+    //len=8*Ko
+    QString msg = QString("WAV SRC MEM%1 FORMAT BYTE\n").arg(ch);
+    gpib->write(msg.toUtf8());
+    gpib->write("DATA?\n");
+    expectedData.push_back(DATA);
+}
 /// Acquire subsystem
 ///*****************
 
-    void HP54111d::Acquire (self,str):
-        msg='ACQ '+str+'\n'
-        gpib->write(msg)
-        st=self.GPIB.read()
-        return st
+void HP54111d::Acquire (QString str)
+{
+    QString msg=QString("ACQ %1\n").arg(str);
+    gpib->write(msg.toUtf8());
+    expectedData.push_back(STATUS);
+}
 
-    void HP54111d::Digitize(self,str):
-        msg = "DIG %s\n" %(str)
-        gpib->write(msg)
+void HP54111d::Digitize(QString str)
+{
+    QString msg = QString("DIG %1\n").arg(str);
+    gpib->write(msg.toUtf8());
+}
 
-    void HP54111d::GetPoints(void) ///integer  501 or 8192
-        gpib->write("ACQ POINTS?\n")
-        st=self.GPIB.read()
-        try:
-          test=int(st)
-        except:
-          return "No acquisition made!\nFirst Acquire Data"
-        return st
 
-    void HP54111d::GetResolution(void) ///integer OFF 6 7 or 8
-        gpib->write("ACQ RESO?\n")
-        st=self.GPIB.read()
-        try:
-          test=int(st)
-        except:
-          return "No acquisition made!\nFirst Acquire Data"
-        return st
+void HP54111d::GetPoints(void) ///integer  501 or 8192
+{
+    gpib->write("ACQ POINTS?\n");
+    expectedData.push_back(ACQPOINTS);
+}
 
-    void HP54111d::SetResolution(self, str): /// '6' '7' '8' or 'OFF'
-        msg = "ACQ RESO %s\n" %(str)
-        gpib->write(msg)
+void HP54111d::GetResolution(void) ///integer OFF 6 7 or 8
+{
+    gpib->write("ACQ RESO?\n");
+    expectedData.push_back(ACQRES);
+}
+
+void HP54111d::SetResolution( int res) /// '6' '7' '8' or 'OFF'
+{
+    QString sRes;
+    if(res>=6 &&res <=8)
+        sRes = QString("%1").arg(res);
+    else
+        sRes = QString("OFF");
+    QString msg = QString("ACQ RESO %1\n").arg(sRes);
+    gpib->write(msg.toUtf8());
+}
