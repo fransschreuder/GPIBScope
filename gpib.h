@@ -9,14 +9,18 @@ class GPIB : public QObject
 public:
     explicit GPIB(int channel, QObject *parent = 0);
     ~GPIB();
+
+    QByteArray read(int minimumLength);
+    QString readLn();
     void write(QByteArray data);
     bool connected;
+    QSerialPort *serial;
 signals:
     void dataRead(QByteArray data);
 public slots:
     void readData(void);
 private:
-    QSerialPort *serial;
+
 
 };
 

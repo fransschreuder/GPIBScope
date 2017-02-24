@@ -6,7 +6,7 @@
 
 QT       += core gui serialport
 
-greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
+greaterThan(QT_MAJOR_VERSION, 4): QT += widgets printsupport
 
 TARGET = GPIBScope
 TEMPLATE = app
@@ -15,10 +15,12 @@ TEMPLATE = app
 SOURCES += main.cpp\
         hpscope.cpp \
     gpib.cpp \
-    hp54111d.cpp
+    hp54111d.cpp \
+    qcustomplot.cpp
 
 HEADERS  += hpscope.h \
     gpib.h \
-    hp54111d.h
+    hp54111d.h \
+    qcustomplot.h
 
 FORMS    += hpscope.ui

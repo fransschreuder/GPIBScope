@@ -16,9 +16,15 @@ public:
     explicit HpScope(QWidget *parent = 0);
     ~HpScope();
 
+private slots:
+
+
+    void on_actionTake_data_triggered();
+
 private:
     Ui::HpScope *ui;
     HP54111d* hp54111d;
+    void Plot(QVector<QVector<double> > dataPoints);
 
 };
 

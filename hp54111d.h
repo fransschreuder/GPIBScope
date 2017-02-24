@@ -4,7 +4,8 @@
 #include <QObject>
 
 typedef enum{
-    STOPPED, STATUS, ID, PREAMBLE, CH1SENS, CH2SENS, TIMESENS,DATA, ACQPOINTS, ACQRES, OFFSET, DELAY, REFERENCE, WAVE, WAVEVALID, COUPLING
+    STOPPED, STATUS, ID, PREAMBLE, CH1SENS, CH2SENS, TIMESENS,DATA, ACQPOINTS, ACQRES, OFFSET, DELAY, REFERENCE, WAVE, WAVEVALID, COUPLING,
+    UNKNOWN
 
 }DataType;
 
@@ -56,7 +57,7 @@ public:
     void GetCoupling(void);
     void SetCoupling(QString coupling);  /// 'DC' 'AC' 'GND'
     void GetValid(void);  ///0
-    void GetData(int ch);
+    QVector<QVector<double> > GetData(int ch);
 
     /// Acquire subsystem
     ///*****************
@@ -95,6 +96,8 @@ private:
     int acqRes;
     QList<DataType> expectedData;
     QString unfinishedData;
+    int expectedDataBytes;
+    QString receivedData;
 
 };
 
