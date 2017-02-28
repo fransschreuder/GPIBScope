@@ -3,18 +3,20 @@
 #include "gpib.h"
 #include <QObject>
 
-typedef enum{
-    STOPPED, STATUS, ID, PREAMBLE, CH1SENS, CH2SENS, TIMESENS,DATA, ACQPOINTS, ACQRES, OFFSET, DELAY, REFERENCE, WAVE, WAVEVALID, COUPLING,
-    UNKNOWN
-
-}DataType;
-
-class HP54111d : public QObject
+class HP54111d : public QThread
 {
     Q_OBJECT
 public:
     explicit HP54111d(QObject *parent = 0);
     ~HP54111d();
+
+    bool connected();
+    void setChannel(int ch);
+    void run(void) Q_DECL_OVERRIDE;
+    void abort(void)
+    {
+        m_abort = true;
+    }
 
     /// system command
     /// *****************
@@ -24,25 +26,25 @@ public:
     void SetLocal(void); /// sets instrument in local mode
     void Autoscale(void);
     bool View(int str);  /// 1 to 4
-    void GetStatus(void);
-    void IsStopped(void);
-    void GetID(void);
+    QString GetStatus(void);
+    bool IsStopped(void);
+    QString GetID(void);
 
     ///channel subsystem
     ///*****************
     double GetSensitivity(int channel);  /// '1' to '4'
-    bool SetSensitivity(int ch, double sensitivity);  ///  '1' "0.01"
-    bool GetOffset(int ch);
-    bool SetOffset(int ch, double str);
+    QString SetSensitivity(int ch, double sensitivity);  ///  '1' "0.01"
+    double GetOffset(int ch);
+    QString SetOffset(int ch, double str);
 
     /// Timebase subsystem
     ///*****************
     double GetTimebase(void);
-    void SetTimebase(double timebase);
-    void GetDelay(void);
-    void SetDelay(double  delay);
-    void GetReference(void);
-    void SetReference(QString ref);  /// 'LEFT' 'CENTER' 'RIGHT'
+    QString SetTimebase(double timebase);
+    double GetDelay(void);
+    QString SetDelay(double  delay);
+    QString GetReference(void);
+    QString SetReference(QString ref);  /// 'LEFT' 'CENTER' 'RIGHT'
 
     ///  Waveform subsystem
     ///*****************
@@ -52,31 +54,28 @@ public:
     double GetYinc(void);  ///real
     double GetYorg(void);  ///real
     double GetXorg(void);  ///real
-    void WaveForm (void);
+    QString WaveForm (void);
     void GetPreamble (void);
-    void GetCoupling(void);
-    void SetCoupling(QString coupling);  /// 'DC' 'AC' 'GND'
-    void GetValid(void);  ///0
-    QVector<QVector<double> > GetData(int ch);
+    QString GetCoupling(void);
+    QString SetCoupling(QString coupling);  /// 'DC' 'AC' 'GND'
+    QString GetValid(void);  ///0
+
 
     /// Acquire subsystem
     ///*****************
-    void Acquire (QString str);
-    void Digitize(QString str);
-    void GetPoints(void); ///integer  501 or 8192
-    void GetResolution(void); ///integer OFF 6 7 or 8
+    QString Acquire ();
+    QString Digitize();
+    int GetPoints(void); ///integer  501 or 8192
+    int GetResolution(void); ///integer OFF 6 7 or 8
     void SetResolution( int res); /// '6' '7' '8' or 'OFF'
-
 signals:
-    void stopped(bool);
-    void status(QString);
-    void id(QString);
-    void preamble(long int POINTS,double XINC,double XORG,double XREF,double YINC,double Y1ORG,double Y2ORG);
-    void dataPoints(void);
-
+    void dataReady(QVector<QVector<double> > data); //double vector of doubles, x and y
+    void progress(int progress); //percentage of read points.
+    void disconnected(void);
 
 public slots:
-    void dataRead(QByteArray data);
+    void onGpibDisconnected(void);
+
 private:
     GPIB* gpib;
 
@@ -92,12 +91,9 @@ private:
     double XDIV ;
     double Y1DIV;
     double Y2DIV;
-    int acqPoints;
-    int acqRes;
-    QList<DataType> expectedData;
-    QString unfinishedData;
-    int expectedDataBytes;
-    QString receivedData;
+    int CHANNEL;
+
+    bool m_abort;
 
 };
 

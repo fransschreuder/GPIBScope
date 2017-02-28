@@ -22,20 +22,41 @@ HpScope::HpScope(QWidget *parent) :
     //connect(ui->plot->xAxis, SIGNAL(rangeChanged(QCPRange)), ui->plot->xAxis2, SLOT(setRange(QCPRange)));
     //connect(ui->plot->yAxis, SIGNAL(rangeChanged(QCPRange)), ui->plot->yAxis2, SLOT(setRange(QCPRange)));
     ui->plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
+    progressBar = new QProgressBar(this);
 
+    progressBar->setMaximumHeight(16);
+    progressBar->setMaximumWidth(200);
+    progressBar->setTextVisible(false);
+    ui->statusBar->addPermanentWidget(progressBar,0);
 
+    //((QMainWindow*)parent())->statusBar()->addPermanentWidget(progressBar, 0);
+    //((QMainWindow*)parent())->statusBar()->showMessage(QString("Loading"));
+    progressBar->setValue(0);
+    progressBar->setMinimum(0);
+    progressBar->setMaximum(100);
     hp54111d = new HP54111d();
+    connect(hp54111d, SIGNAL(dataReady(QVector<QVector<double> >)), this, SLOT(onScopeDataComplete(QVector<QVector<double> >)));
+    connect(hp54111d, SIGNAL(progress(int)), this, SLOT(onScopeProgress(int)));
 
-    hp54111d->Stop();
-
-    hp54111d->GetPreamble();
+    if(hp54111d->connected())
+    {
+        hp54111d->Stop();
+        hp54111d->GetPreamble();
+    }
+    else
+        ui->statusBar->showMessage("Not connected");
 }
 
 
 HpScope::~HpScope()
 {
-
+    ui->statusBar->clearMessage();
+    ui->statusBar->removeWidget(progressBar);
+    disconnect(hp54111d, SIGNAL(dataReady(QVector<QVector<double> >)), this, SLOT(onScopeDataComplete(QVector<QVector<double> >)));
+    disconnect(hp54111d, SIGNAL(progress(int)), this, SLOT(onScopeProgress(int)));
     delete ui;
+    hp54111d->abort();
+    hp54111d->wait();
     delete hp54111d;
 }
 
@@ -52,8 +73,37 @@ void HpScope::Plot(QVector<QVector<double> > dataPoints)
 
 void HpScope::on_actionTake_data_triggered()
 {
-    hp54111d->Stop();
-    hp54111d->Digitize("1");
-    QVector<QVector<double> > dataPoints = hp54111d->GetData(1);
-    Plot(dataPoints);
+    progressBar->setValue(0);
+    if(hp54111d->connected())
+    {
+        ui->statusBar->showMessage("Measuring");
+        hp54111d->Stop();
+        hp54111d->setChannel(1);
+
+        hp54111d->Digitize();
+
+        hp54111d->start();
+
+    }
+    else
+        ui->statusBar->showMessage("Not connected");
+}
+
+
+void HpScope::onScopeDataComplete(QVector<QVector<double> > data)
+{
+    ui->statusBar->showMessage("Data taking complete");
+    Plot(data);
+    hp54111d->Run();
+    hp54111d->SetLocal();
+}
+
+void HpScope::onScopeProgress(int progress)
+{
+    progressBar->setValue(progress);
+}
+
+void HpScope::OnScopeDisconnected()
+{
+    ui->statusBar->showMessage("Not connected");
 }

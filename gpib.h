@@ -7,21 +7,19 @@ class GPIB : public QObject
 {
     Q_OBJECT
 public:
-    explicit GPIB(int channel, QObject *parent = 0);
+    explicit GPIB(int address, QObject *parent = 0);
     ~GPIB();
 
-    QByteArray read(int minimumLength);
-    QString readLn();
+    //QByteArray read(int minimumLength);
+    QString readLn(bool* abort);
     void write(QByteArray data);
-    bool connected;
+    void flush();
+    bool connected();
+private:
+    bool m_connected;
     QSerialPort *serial;
 signals:
-    void dataRead(QByteArray data);
-public slots:
-    void readData(void);
-private:
-
-
+    void disconnected(void);
 };
 
 #endif // GPIB_H

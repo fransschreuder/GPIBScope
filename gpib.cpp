@@ -1,11 +1,11 @@
 #include "gpib.h"
 
 
-GPIB::GPIB(int channel, QObject *parent) :
+GPIB::GPIB(int address, QObject *parent) :
     QObject(parent)
 {
     serial = new QSerialPort(this);
-    connected = false;
+    m_connected = false;
     QList<QSerialPortInfo> availablePorts = QSerialPortInfo::availablePorts();
     for(int i=0; i<availablePorts.size(); i++)
     {
@@ -13,12 +13,12 @@ GPIB::GPIB(int channel, QObject *parent) :
         serial->setBaudRate(460800);
         if (serial->open(QIODevice::ReadWrite)) {
             qDebug()<<"Connected to "<<availablePorts[i].portName();
-            QString init = QString("++addr %1\n*IDN?\n").arg(channel);
+            QString init = QString("++addr %1\n*IDN?\n").arg(address);
             serial->write(init.toUtf8());
             QString d = "";
             if(serial->waitForReadyRead(1000))
             {
-                connected = true;
+                m_connected = true;
                 d += QString(serial->readAll());
                 while(d.length()<15)
                 {
@@ -29,8 +29,6 @@ GPIB::GPIB(int channel, QObject *parent) :
                 qDebug()<<d.length();
 
                 qDebug()<<"Got IDN data: "<<d;
-                //connect(serial, SIGNAL(readyRead()), this, SLOT(readData()));
-
                 break;
             }
             else
@@ -47,36 +45,25 @@ GPIB::GPIB(int channel, QObject *parent) :
 
 GPIB::~GPIB()
 {
-    if(connected)
+    if(m_connected)
     {
-        //disconnect(serial, SIGNAL(readyRead()), this, SLOT(readData()));
         serial->close();
     }
-    //delete serial;
-}
-
-void GPIB::readData(void)
-{
-
-    //disconnect(serial, SIGNAL(readyRead()), this, SLOT(readData()));
-    QByteArray data = serial->readAll();
-
-    qDebug()<<data;
-    emit dataRead(data);
-    //connect(serial, SIGNAL(readyRead()), this, SLOT(readData()));
 }
 
 void GPIB::write(QByteArray data)
 {
+    if(!connected())
+        return;
     serial->write(data);
 }
 
-QByteArray GPIB::read(int minimumLength)
+/*QByteArray GPIB::read(int minimumLength)
 {
     QByteArray d;
     serial->waitForReadyRead(1000);
     d += QString(serial->readAll());
-    while(d.length()<minimumLength||(minimumLength==-1&&!d.contains('\n')))
+    while((d.length()<minimumLength||(minimumLength==-1&&!d.contains('\n')))&&!abort)
     {
           if(!serial->waitForReadyRead(1000))
               break;
@@ -85,21 +72,32 @@ QByteArray GPIB::read(int minimumLength)
     }
 
     return d;
-}
+}*/
 
-QString GPIB::readLn()
+QString GPIB::readLn(bool* abort)
 {
-    QString d;
-    while(!serial->canReadLine())
+    if(!connected())
+        return QString("");
+    while(!serial->canReadLine()&&!(*abort))
         serial->waitForReadyRead(1000);
     return QString(serial->readLine());
-    /*while(d.length()<minimumLength||(minimumLength==-1&&!d.contains('\n')))
+}
+
+void GPIB::flush()
+{
+    if(!connected())
+        return;
+    serial->readAll();
+}
+
+bool GPIB::connected()
+{
+    QSerialPortInfo p(serial->portName());
+    if(p.isNull())
     {
-          if(!serial->waitForReadyRead(1000))
-              break;
-          d +=  QString(serial->readAll());
-
+        qDebug()<<"Port is NULL, disconnecting";
+        m_connected = false;
+        emit disconnected();
     }
-
-    return d;*/
+    return m_connected;
 }

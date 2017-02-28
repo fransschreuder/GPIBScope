@@ -2,10 +2,11 @@
 #include <QDebug>
 #include <stdio.h>
 HP54111d::HP54111d(QObject *parent) :
-    QObject(parent)
+    QThread(parent)
 {
     gpib=new GPIB(7);
-    connect(gpib, SIGNAL(dataRead(QByteArray)), this, SLOT(dataRead(QByteArray)));
+    connect(gpib, SIGNAL(disconnected()), this, SLOT(onGpibDisconnected()));
+    //connect(gpib, SIGNAL(dataRead(QByteArray)), this, SLOT(dataRead(QByteArray)));
     YINC=.0;
     XINC=.0;
     XREF=.0;
@@ -18,7 +19,7 @@ HP54111d::HP54111d(QObject *parent) :
     XDIV =100E-3;
     Y1DIV=1.0;
     Y2DIV=1.0;
-    expectedDataBytes = 0;
+
 }
 
 
@@ -27,134 +28,10 @@ HP54111d::~HP54111d()
     //delete gpib;
 }
 
-void HP54111d::dataRead(QByteArray data)
+bool HP54111d::connected()
 {
-    bool success;
-    qDebug()<<data;
-    return;
-    QString dataS(unfinishedData+data);
-    //qDebug()<<"HP54111d received: " << dataS;
-    unfinishedData = "";
-    DataType type = UNKNOWN;
-    if(expectedData.size()>0)
-    {
-        DataType type = expectedData.back();
-        expectedData.pop_back();
-    }
-    if(dataS.startsWith("DATA  #A"))
-    {
-        expectedDataBytes = 8192;
-        int size = ((int)dataS.at(6).toLatin1())+((int)dataS.at(7).toLatin1())*256;
-        qDebug()<<"Size: "<<size;
-        receivedData=dataS.mid(7);
-        expectedDataBytes -= receivedData.length();
-        return;
-    }
-    if(expectedDataBytes>0)
-    {
-        expectedDataBytes-=dataS.length();
-        receivedData+=dataS;
-        qDebug()<<expectedDataBytes;
-        if(expectedDataBytes <= 30)
-        {
-            for(int i=0; i<receivedData.length(); i++)
-            {
-                qDebug()<<(int)receivedData.at(i).toLatin1();
-            }
-        }
-        return;
-    }
-
-
-    int i;
-    QStringList sl;
-    switch(type)
-    {
-        case STOPPED:
-            i=dataS.toLong();
-            if ( (i == 42) || (i ==0 ) )
-                emit stopped(true);
-            else
-                emit stopped(false);
-            break;
-        case STATUS:
-            qDebug()<<"Status: "<<data;
-            emit status(dataS);
-            break;
-        case ID:
-            emit id(dataS);
-        case PREAMBLE:
-            sl=dataS.split(',');
-            qDebug()<<"Preamle: "<<sl;
-
-            if(sl.size()<11)
-            {
-                qDebug()<<"Preamble does not have enough points";
-                unfinishedData = dataS;
-                break;
-            }
-            POINTS = sl[3].toLong();
-            XINC   = sl[5].toDouble();
-            XORG   = sl[6].toDouble();
-            XREF   = sl[7].toDouble();
-            YINC   = sl[8].toDouble();
-            Y1ORG  = sl[9].toDouble();
-            Y2ORG  = Y1ORG;
-            YREF   = sl[10].toDouble();
-            break;
-        case CH1SENS:
-            Y1DIV=dataS.toDouble();
-            gpib->write("CH 2 SENS?\n");
-            expectedData.push_back(CH1SENS);
-            break;
-        case CH2SENS:
-            Y1DIV=dataS.toDouble();
-            gpib->write("TIM SENS?\n");
-            expectedData.push_back(TIMESENS);
-            break;
-        case TIMESENS:
-            XDIV = dataS.toDouble();
-            emit preamble(POINTS,XINC,XORG,XREF,YINC,Y1ORG,Y2ORG);
-            break;
-
-        case DATA:
-            qDebug()<<"DATA:" << dataS;
-            /**
-             * TODO: Interprete dataS like python code below:
-             * GPIB.readbyte(4)
-            ///print "///2A + len (2bytes)"
-            YP=GPIB.readbyte(len)   ///data
-            data= zeros (len, Float)
-            y1div=float(GetSensitivity('1'))
-            y2div=float(GetSensitivity('2'))
-            yref=float(YREF)
-            yinc=float(YINC)
-            yorg=float(GetYorg(str))
-            if (str=='1'):
-               for XP in range (0,len,1):
-                   data[XP]= ( (ord(YP[XP]) - yref)*yinc + yorg )
-            else:
-               for XP in range (0,len,1):
-                   data[XP]= ( (ord(YP[XP]) - yref)*yinc + yorg ) * y1div/ y2div
-            return data
-            */
-            emit dataPoints();
-            break;
-        case ACQPOINTS:
-            acqPoints = dataS.toDouble(&success);
-            if(!success)qDebug()<<"No acquisition made!\nFirst Acquire Data";
-            break;
-        case ACQRES:
-            acqRes = dataS.toDouble(&success);
-            if(!success)qDebug()<<"No acquisition made!\nFirst Acquire Data";
-            break;
-        default:
-            //qDebug()<<type<<" not implemented, invalid return value from scope";
-            break;
-    }
+    return gpib->connected();
 }
-
-
 
 /// system command
 /// *****************
@@ -166,7 +43,8 @@ void HP54111d::Reset(void)  /// preset s to its void HP54111d::ault settings
 void HP54111d::Stop(void) /// stops acquire
 {
     gpib->write("KEY 42\n");
-    gpib->read(-1);
+    bool abort;
+    gpib->readLn(&abort);
 
 }
 
@@ -187,39 +65,48 @@ void HP54111d::Autoscale(void)
 
 bool HP54111d::View(int str)  /// 1 to 4
 {
-
+    bool abort = false;
     if ((str>0) && (str<5))
     {
        QString msg = QString("VIEW CH %1\n").arg(str);
        gpib->write(msg.toUtf8());
-       //st=GPIB.read()
-       expectedData.push_back(STATUS);
+       QString st=gpib->readLn(&abort);
+       qDebug()<<st;
        return true;
     }
     else
        return false;
 }
 
-void HP54111d::GetStatus(void)
+QString HP54111d::GetStatus(void)
 {
+    bool abort = false;
 
     gpib->write("STA?\n");
-    expectedData.push_back(STATUS);
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
-void HP54111d::IsStopped(void)
+bool HP54111d::IsStopped(void)
 {
+    bool abort = false;
     gpib->write("KEY?\n");
+    QString s = gpib->readLn(&abort);
 
-    expectedData.push_back(STOPPED);
+    int i=s.toLong();
+    if ( (i == 42) || (i ==0 ) )
+        return true;
+    else
+        return false;
+
 }
 
-void HP54111d::GetID(void)
+QString HP54111d::GetID(void)
 {
+    bool abort = false;
     gpib->write("ID?\n");
-    expectedData.push_back(ID);
-    //st=GPIB.read()
-
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
 
@@ -233,44 +120,50 @@ double HP54111d::GetSensitivity(int channel)  /// '1' to '4'
        return Y2DIV;
 }
 
-bool HP54111d::SetSensitivity(int ch, double sensitivity)  ///  '1' "0.01"
+QString HP54111d::SetSensitivity(int ch, double sensitivity)  ///  '1' "0.01"
 {
-    if ((ch>'0') &&(ch<'5'))
+    bool abort = false;
+    if ((ch>0) &&(ch<5))
     {
        QString msg = QString("CH %1 SENS %2\n").arg(ch).arg(sensitivity);
        gpib->write(msg.toUtf8());
-       expectedData.push_back(STATUS);
-       //st=GPIB.read()
-       return true;
+       QString st=gpib->readLn(&abort);
+       qDebug()<<st;
+       return st;
     }
     else
-       return false;
+       return "-1";
 }
 
-bool HP54111d::GetOffset(int ch)
+double HP54111d::GetOffset(int ch)
 {
+    bool abort = false;
     if (ch>0&&ch<5)
     {
        QString msg = QString("CH %1 OFFS?\n").arg(ch);
        gpib->write(msg.toUtf8());
-       expectedData.push_back(OFFSET);
-       return true;
+       QString st=gpib->readLn(&abort);
+       bool ok;
+       double offset = st.toDouble(&ok);
+       if(ok)return offset;
+       else return -1;
     }
     else
-       return false;
+       return -1;
 }
 
-bool HP54111d::SetOffset(int ch, double str)
+QString HP54111d::SetOffset(int ch, double str)
 {
+    bool abort = false;
    if (ch>0&&ch<5)
    {
        QString msg = QString("CH %1 OFFS %2\n").arg(ch).arg(str);
        gpib->write(msg.toUtf8());
-       expectedData.push_back(STATUS);
-       return true;
+       QString st=gpib->readLn(&abort);
+       return st;
    }
    else
-       return false;
+       return "-1";
 }
 
 /// Timebase subsystem
@@ -280,108 +173,124 @@ double HP54111d::GetTimebase(void)
     return XDIV;
 }
 
-void HP54111d::SetTimebase(double timebase)
+QString HP54111d::SetTimebase(double timebase)
 {
+    bool abort = false;
     QString msg = QString("TIM SENS %1\n").arg(timebase);
     gpib->write(msg.toUtf8());
-    expectedData.push_back(STATUS);
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
-void HP54111d::GetDelay(void)
+double HP54111d::GetDelay(void)
 {
+    bool abort = false;
     gpib->write("TIM DEL?\n");
-    expectedData.push_back(DELAY);
+    QString st=gpib->readLn(&abort);
+    bool ok;
+    double delay = st.toDouble(&ok);
+    if(ok)return delay;
+    else return -1;
 }
 
-void HP54111d::SetDelay(double  delay)
+QString HP54111d::SetDelay(double  delay)
 {
+    bool abort = false;
     QString msg = QString("TIM DEL %1\n").arg(delay);
     gpib->write(msg.toUtf8());
-    expectedData.push_back(STATUS);
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
-void HP54111d::GetReference(void)
+QString HP54111d::GetReference(void)
 {
+    bool abort = false;
     gpib->write("TIM REF?\n");
-    expectedData.push_back(REFERENCE);
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
-void HP54111d::SetReference(QString ref)  /// 'LEFT' 'CENTER' 'RIGHT'
+QString HP54111d::SetReference(QString ref)  /// 'LEFT' 'CENTER' 'RIGHT'
 {
+    bool abort = false;
     QString msg = QString("TIM REF %1\n").arg(ref);
     gpib->write(msg.toUtf8());
-    expectedData.push_back(STATUS);
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
 ///  Waveform subsystem
 ///*****************
 double HP54111d::GetXref(void)  ///0
 {
-    gpib->write("WAV XREFERENCE?\n");
+    /*gpib->write("WAV XREFERENCE?\n");
     QString d = gpib->read(-1);
     qDebug()<<"Xref: "<<d;
-    ///st=GPIB.read()
+    ///st=GPIB.read()*/
     return XREF;
 }
 
 double HP54111d::GetYref(void)  ///128
 {
-    gpib->write("WAV YREFERENCE?\n");
+    /*gpib->write("WAV YREFERENCE?\n");
     QString d = gpib->read(-1);
     qDebug()<<"Yref: "<<d;
-    ///st=GPIB.read()
+    ///st=GPIB.read()*/
     return YREF;
 }
 
 double HP54111d::GetXinc(void)  ///real 10ps to 20ms
 {
-    gpib->write("XINCREMENT?\n");
+    /*gpib->write("XINCREMENT?\n");
     QString d = gpib->read(-1);
     qDebug()<<"Xinc: "<<d;
 
     ///st=GPIB.read()
-    XINC=XDIV/50.0;
+    XINC=XDIV/50.0;*/
     return XINC;
 }
 
 double HP54111d::GetYinc(void)  ///real
 {
-    gpib->write("WAV YINCREMENT?\n");
+    /*gpib->write("WAV YINCREMENT?\n");
     QString d = gpib->read(-1);
     qDebug()<<"Yinc:" <<d;
-    ///st=GPIB.read()
+    ///st=GPIB.read()*/
     return YINC;
 }
 
 double HP54111d::GetYorg(void)  ///real
 {
-    gpib->write("WAV YORIGIN?\n");
+    /*gpib->write("WAV YORIGIN?\n");
     QString d = gpib->read(-1);
     qDebug()<<"Yorg: "<<d;
-    ///st=GPIB.read()
+    ///st=GPIB.read()*/
     return Y1ORG;
 }
 
 double HP54111d::GetXorg(void)  ///real
 {
-    gpib->write("WAV XORIGIN?\n");
+    /*gpib->write("WAV XORIGIN?\n");
     QString d = gpib->read(-1);
     qDebug()<<"Xorg: "<<d;
-    ///st=GPIB.read()
+    ///st=GPIB.read()*/
     return XORG;
 }
 
-void HP54111d::WaveForm (void)
+QString HP54111d::WaveForm (void)
 {
+    bool abort = false;
     gpib->write("WAV?\n");
-    expectedData.push_back(WAVE);
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
 void HP54111d::GetPreamble (void)
 {
+    bool abort = false;
 
     gpib->write("WAV SRC MEM1 PRE?\n");
-    QString d = gpib->read(119);
+    QString d = gpib->readLn(&abort);
     QStringList sl;
     sl=d.split(',');
 
@@ -401,26 +310,42 @@ void HP54111d::GetPreamble (void)
     qDebug()<<d;
     qDebug()<<"Preabmle: "<<POINTS <<" "<< XINC <<" "<<XORG<<" "<< XREF<< " "<<YINC<<" "<< Y1ORG<<" "<< Y2ORG<<" "<< YREF;
 
+    gpib->write("CH 1 SENS?\n");
+    d = gpib->readLn(&abort);
+    Y1DIV=d.toDouble();
+    gpib->write("CH 2 SENS?\n");
+    d= gpib->readLn(&abort);
+    Y2DIV=d.toDouble();
+    gpib->write("TIM SENS?\n");
+    d = gpib->readLn(&abort);
+    XDIV = d.toDouble();
+
 
 }
 
-void HP54111d::GetCoupling(void)
+QString HP54111d::GetCoupling(void)
 {
+    bool abort = false;
     gpib->write("WAV COUPLING?\n");
-    expectedData.push_back(COUPLING);
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
-void HP54111d::SetCoupling(QString coupling)  /// 'DC' 'AC' 'GND'
+QString HP54111d::SetCoupling(QString coupling)  /// 'DC' 'AC' 'GND'
 {
+    bool abort = false;
     QString msg = QString("WAV COUPLING %1\n").arg(coupling);
     gpib->write(msg.toUtf8());
-    expectedData.push_back(STATUS);
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
-void HP54111d::GetValid(void)  ///0
+QString HP54111d::GetValid(void)  ///0
 {
+    bool abort = false;
     gpib->write("WAV VALID?\n");
-    expectedData.push_back(WAVEVALID);
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
 /**
@@ -431,28 +356,29 @@ WAV SRC MEM1 FORMAT ASCII
 DATA?
 
  */
-
-QVector<QVector<double> > HP54111d::GetData(int ch)
+void HP54111d::setChannel(int ch)
 {
-    //len=8*Ko
-    //throw away old data in buffer.
-    gpib->serial->readAll();//read(-1);
-    //QThread::msleep(200);
-    QString msg = QString("WAV SRC MEM%1 FORMAT ASCII\n").arg(ch);
+    CHANNEL=ch;
+}
+
+void HP54111d::run(void)
+{
+    QTime timer;
+    timer.start();
+    m_abort = false;
+    gpib->flush();
+    QString msg = QString("WAV SRC MEM%1 FORMAT ASCII\n").arg(CHANNEL);
     gpib->write(msg.toUtf8());
-
-    //gpib->read(-1);
     gpib->write("DATA?\n");
-    //QByteArray data = gpib->read(-1);
-    gpib->readLn(); //"DATA\n"
-
+    gpib->readLn(&m_abort); //"DATA\n"
     QVector< QVector<double> > dataPoints;
     dataPoints.resize(2);
     dataPoints[0].resize(8192);
     dataPoints[1].resize(8192);
     for (int i=0; i<8192; i++)
     {
-        QString data = gpib->readLn();
+        if(m_abort)return;
+        QString data = gpib->readLn(&m_abort);
         dataPoints[0][(i)]=(((double)i)*XINC)-XREF;
         bool ok;
         int d = (int) data.toInt(&ok);
@@ -460,39 +386,56 @@ QVector<QVector<double> > HP54111d::GetData(int ch)
             qDebug()<<i<<": "<<data;
 
         dataPoints[1][(i)]=(((double) (d))-YREF)*YINC;
+        emit progress(819200/i);
 
     }
-    return dataPoints;
+    int nMilliseconds = timer.elapsed();
+    qDebug()<<"Taking a scope trace took "<<nMilliseconds<<" ms.";
+    emit dataReady(dataPoints);
 
 }
 /// Acquire subsystem
 ///*****************
 
-void HP54111d::Acquire (QString str)
+QString HP54111d::Acquire ()
 {
-    QString msg=QString("ACQ %1\n").arg(str);
+    bool abort = false;
+    QString msg=QString("ACQ %1\n").arg(CHANNEL);
     gpib->write(msg.toUtf8());
-    expectedData.push_back(STATUS);
+    QString st=gpib->readLn(&abort);
+    return st;
 }
 
-void HP54111d::Digitize(QString str)
+QString HP54111d::Digitize()
 {
-    QString msg = QString("DIG %1\n").arg(str);
+    bool abort = false;
+    QString msg = QString("DIG %1\n").arg(CHANNEL);
     gpib->write(msg.toUtf8());
-    gpib->read(-1);
+    QString st = gpib->readLn(&abort);
+    return st;
 }
 
 
-void HP54111d::GetPoints(void) ///integer  501 or 8192
+int HP54111d::GetPoints(void) ///integer  501 or 8192
 {
+    bool abort = false;
     gpib->write("ACQ POINTS?\n");
-    expectedData.push_back(ACQPOINTS);
+    QString st=gpib->readLn(&abort);
+    bool ok;
+    int points = st.toInt(&ok);
+    if(ok)return points;
+    else return -1;
 }
 
-void HP54111d::GetResolution(void) ///integer OFF 6 7 or 8
+int HP54111d::GetResolution(void) ///integer OFF 6 7 or 8
 {
+    bool abort = false;
     gpib->write("ACQ RESO?\n");
-    expectedData.push_back(ACQRES);
+    QString st=gpib->readLn(&abort);
+    bool ok;
+    int res = st.toInt(&ok);
+    if(ok)return res;
+    else return -1;
 }
 
 void HP54111d::SetResolution( int res) /// '6' '7' '8' or 'OFF'
@@ -504,4 +447,9 @@ void HP54111d::SetResolution( int res) /// '6' '7' '8' or 'OFF'
         sRes = QString("OFF");
     QString msg = QString("ACQ RESO %1\n").arg(sRes);
     gpib->write(msg.toUtf8());
+}
+
+void HP54111d::onGpibDisconnected()
+{
+    emit disconnected();
 }
