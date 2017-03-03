@@ -24,3 +24,5 @@ HEADERS  += hpscope.h \
     qcustomplot.h
 
 FORMS    += hpscope.ui
+
+#DEFINES += DUMMYDATA

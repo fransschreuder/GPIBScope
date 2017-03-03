@@ -12,7 +12,7 @@ GPIB::GPIB(int address, QObject *parent) :
         serial->setPortName(availablePorts[i].portName());
         serial->setBaudRate(460800);
         if (serial->open(QIODevice::ReadWrite)) {
-            qDebug()<<"Connected to "<<availablePorts[i].portName();
+            qDebug()<<"Opening port "<<availablePorts[i].portName();
             QString init = QString("++addr %1\n*IDN?\n").arg(address);
             serial->write(init.toUtf8());
             QString d = "";

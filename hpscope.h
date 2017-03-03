@@ -32,6 +32,7 @@ private:
     void Plot(QVector<QVector<double> > dataPoints);
     QProgressBar *progressBar;
 
+
 };
 
 #endif // HPSCOPE_H

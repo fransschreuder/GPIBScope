@@ -3,6 +3,11 @@
 #include "gpib.h"
 #include <QObject>
 
+typedef enum
+{
+    CONNECT, MEASURE
+}command_t;
+
 class HP54111d : public QThread
 {
     Q_OBJECT
@@ -12,11 +17,14 @@ public:
 
     bool connected();
     void setChannel(int ch);
+    void setCommand(command_t Command);
     void run(void) Q_DECL_OVERRIDE;
     void abort(void)
     {
         m_abort = true;
     }
+
+    void connectGpib();
 
     /// system command
     /// *****************
@@ -25,11 +33,19 @@ public:
     void Run(void); /// runs acquire
     void SetLocal(void); /// sets instrument in local mode
     void Autoscale(void);
-    bool View(int str);  /// 1 to 4
-    QString GetStatus(void);
-    bool IsStopped(void);
-    QString GetID(void);
+    void View(int str);  /// 1 to 4
+    void GetStatus(void);
+    void IsStopped(void);
+    void GetID(void);
 
+    void measure(void);
+
+signals:
+    void status(QString status);
+    void stopped(bool isStopped);
+    void iD(QString ID);
+
+public:
     ///channel subsystem
     ///*****************
     double GetSensitivity(int channel);  /// '1' to '4'
@@ -77,6 +93,7 @@ public slots:
     void onGpibDisconnected(void);
 
 private:
+    QVector<void*> FunctionQueue;
     GPIB* gpib;
 
     double YINC;
@@ -94,6 +111,8 @@ private:
     int CHANNEL;
 
     bool m_abort;
+    bool m_connected;
+    command_t m_Command;
 
 };
 

@@ -38,13 +38,8 @@ HpScope::HpScope(QWidget *parent) :
     connect(hp54111d, SIGNAL(dataReady(QVector<QVector<double> >)), this, SLOT(onScopeDataComplete(QVector<QVector<double> >)));
     connect(hp54111d, SIGNAL(progress(int)), this, SLOT(onScopeProgress(int)));
 
-    if(hp54111d->connected())
-    {
-        hp54111d->Stop();
-        hp54111d->GetPreamble();
-    }
-    else
-        ui->statusBar->showMessage("Not connected");
+    hp54111d->setCommand(CONNECT);
+    hp54111d->start();
 }
 
 
@@ -56,8 +51,7 @@ HpScope::~HpScope()
     disconnect(hp54111d, SIGNAL(progress(int)), this, SLOT(onScopeProgress(int)));
     delete ui;
     hp54111d->abort();
-    hp54111d->wait();
-    delete hp54111d;
+    connect(hp54111d, SIGNAL(finished()), hp54111d, SLOT(deleteLater()));
 }
 
 void HpScope::Plot(QVector<QVector<double> > dataPoints)
@@ -76,14 +70,11 @@ void HpScope::on_actionTake_data_triggered()
     progressBar->setValue(0);
     if(hp54111d->connected())
     {
+        qDebug()<<"Starting measurement";
         ui->statusBar->showMessage("Measuring");
-        hp54111d->Stop();
         hp54111d->setChannel(1);
-
-        hp54111d->Digitize();
-
+        hp54111d->setCommand(MEASURE);
         hp54111d->start();
-
     }
     else
         ui->statusBar->showMessage("Not connected");
@@ -92,6 +83,7 @@ void HpScope::on_actionTake_data_triggered()
 
 void HpScope::onScopeDataComplete(QVector<QVector<double> > data)
 {
+
     ui->statusBar->showMessage("Data taking complete");
     Plot(data);
     hp54111d->Run();
@@ -107,3 +99,5 @@ void HpScope::OnScopeDisconnected()
 {
     ui->statusBar->showMessage("Not connected");
 }
+
+

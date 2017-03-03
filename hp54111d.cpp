@@ -4,9 +4,6 @@
 HP54111d::HP54111d(QObject *parent) :
     QThread(parent)
 {
-    gpib=new GPIB(7);
-    connect(gpib, SIGNAL(disconnected()), this, SLOT(onGpibDisconnected()));
-    //connect(gpib, SIGNAL(dataRead(QByteArray)), this, SLOT(dataRead(QByteArray)));
     YINC=.0;
     XINC=.0;
     XREF=.0;
@@ -28,9 +25,20 @@ HP54111d::~HP54111d()
     //delete gpib;
 }
 
+void HP54111d::connectGpib(void)
+{
+    gpib=new GPIB(7);
+    if(gpib->connected())
+    {
+        m_connected = true;
+        connect(gpib, SIGNAL(disconnected()), this, SLOT(onGpibDisconnected()));
+        GetPreamble();
+    }
+}
+
 bool HP54111d::connected()
 {
-    return gpib->connected();
+    return m_connected;
 }
 
 /// system command
@@ -63,7 +71,7 @@ void HP54111d::Autoscale(void)
     gpib->write("AUTOSCALE\n");
 }
 
-bool HP54111d::View(int str)  /// 1 to 4
+void HP54111d::View(int str)  /// 1 to 4
 {
     bool abort = false;
     if ((str>0) && (str<5))
@@ -72,22 +80,19 @@ bool HP54111d::View(int str)  /// 1 to 4
        gpib->write(msg.toUtf8());
        QString st=gpib->readLn(&abort);
        qDebug()<<st;
-       return true;
     }
-    else
-       return false;
 }
 
-QString HP54111d::GetStatus(void)
+void HP54111d::GetStatus(void)
 {
     bool abort = false;
 
     gpib->write("STA?\n");
     QString st=gpib->readLn(&abort);
-    return st;
+    emit status(st);
 }
 
-bool HP54111d::IsStopped(void)
+void HP54111d::IsStopped(void)
 {
     bool abort = false;
     gpib->write("KEY?\n");
@@ -95,18 +100,18 @@ bool HP54111d::IsStopped(void)
 
     int i=s.toLong();
     if ( (i == 42) || (i ==0 ) )
-        return true;
+        emit stopped(true);
     else
-        return false;
+        emit stopped(false);
 
 }
 
-QString HP54111d::GetID(void)
+void HP54111d::GetID(void)
 {
     bool abort = false;
     gpib->write("ID?\n");
     QString st=gpib->readLn(&abort);
-    return st;
+    emit iD(st);
 }
 
 
@@ -308,7 +313,7 @@ void HP54111d::GetPreamble (void)
     Y2ORG  = Y1ORG;
     YREF   = sl[9].toDouble();
     qDebug()<<d;
-    qDebug()<<"Preabmle: "<<POINTS <<" "<< XINC <<" "<<XORG<<" "<< XREF<< " "<<YINC<<" "<< Y1ORG<<" "<< Y2ORG<<" "<< YREF;
+    qDebug()<<"Preamble: "<<POINTS <<" "<< XINC <<" "<<XORG<<" "<< XREF<< " "<<YINC<<" "<< Y1ORG<<" "<< Y2ORG<<" "<< YREF;
 
     gpib->write("CH 1 SENS?\n");
     d = gpib->readLn(&abort);
@@ -361,10 +366,13 @@ void HP54111d::setChannel(int ch)
     CHANNEL=ch;
 }
 
-void HP54111d::run(void)
+void HP54111d::measure(void)
 {
     QTime timer;
     timer.start();
+    Stop();
+    Digitize();
+
     m_abort = false;
     gpib->flush();
     QString msg = QString("WAV SRC MEM%1 FORMAT ASCII\n").arg(CHANNEL);
@@ -384,14 +392,15 @@ void HP54111d::run(void)
         int d = (int) data.toInt(&ok);
         if (!ok)
             qDebug()<<i<<": "<<data;
-
         dataPoints[1][(i)]=(((double) (d))-YREF)*YINC;
-        emit progress(819200/i);
+        emit progress((100*i)/8192);
 
     }
     int nMilliseconds = timer.elapsed();
     qDebug()<<"Taking a scope trace took "<<nMilliseconds<<" ms.";
+    Run();
     emit dataReady(dataPoints);
+
 
 }
 /// Acquire subsystem
@@ -451,5 +460,25 @@ void HP54111d::SetResolution( int res) /// '6' '7' '8' or 'OFF'
 
 void HP54111d::onGpibDisconnected()
 {
+    m_connected = false;
     emit disconnected();
+}
+
+void HP54111d::setCommand(command_t Command)
+{
+    m_Command = Command;
+}
+
+void HP54111d::run(void)
+{
+    switch(m_Command)
+    {
+    case CONNECT:
+        connectGpib();
+        break;
+    case MEASURE:
+        measure();
+        break;
+
+    }
 }
